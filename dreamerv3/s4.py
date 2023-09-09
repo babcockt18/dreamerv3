@@ -96,7 +96,6 @@ from jax.nn.initializers import lecun_normal, normal
 from jax.numpy.linalg import eigh, inv, matrix_power
 from jax.scipy.signal import convolve
 
-
 if __name__ == "__main__":
     # For this tutorial, construct a global JAX rng key
     # But we don't want it when importing as a library
@@ -112,77 +111,42 @@ if __name__ == "__main__":
 # However, we are going to need some technical background. Let's work
 # our way through the background of the paper.
 
-# > The [state space model](https://en.wikipedia.org/wiki/State-space_representation) is defined by this simple equation.
-# > It maps a 1-D input signal $u(t)$ to an $N$-D latent state $x(t)$
-# > before projecting to a 1-D output signal $y(t)$.
-# $$
-#   \begin{aligned}
-#     x'(t) &= \boldsymbol{A}x(t) + \boldsymbol{B}u(t) \\
-#     y(t) &= \boldsymbol{C}x(t) + \boldsymbol{D}u(t)
-#   \end{aligned}
-# $$
-# > Our goal is
-# > to simply use the SSM as a black-box representation in a deep
-# > sequence model, where $\boldsymbol{A}, \boldsymbol{B}, \boldsymbol{C}, \boldsymbol{D}$ are
-# > parameters learned by gradient descent.  For the remainder, we will
-# > omit the parameter $\boldsymbol{D}$ for exposition (or equivalently,
-# > assume $\boldsymbol{D} = 0$  because the term $\boldsymbol{D}u$ can be
-# > viewed as a skip connection and is easy to compute).
-# >
-# > An SSM maps a input $u(t)$ to a state representation vector $x(t)$ and an output $y(t)$.
-# > For simplicity, we assume the input and output are one-dimensional, and the state representation
-# > is $N$-dimensional. The first equation defines the change in $x(t)$ over time.
+# > The [state space model](https://en.wikipedia.org/wiki/State-space_representation) is defined by this simple
+# equation. > It maps a 1-D input signal $u(t)$ to an $N$-D latent state $x(t)$ > before projecting to a 1-D output
+# signal $y(t)$. $$ \begin{aligned} x'(t) &= \boldsymbol{A}x(t) + \boldsymbol{B}u(t) \\ y(t) &= \boldsymbol{C}x(t) +
+# \boldsymbol{D}u(t) \end{aligned} $$ > Our goal is > to simply use the SSM as a black-box representation in a deep >
+# sequence model, where $\boldsymbol{A}, \boldsymbol{B}, \boldsymbol{C}, \boldsymbol{D}$ are > parameters learned by
+# gradient descent.  For the remainder, we will > omit the parameter $\boldsymbol{D}$ for exposition (or
+# equivalently, > assume $\boldsymbol{D} = 0$  because the term $\boldsymbol{D}u$ can be > viewed as a skip
+# connection and is easy to compute). > > An SSM maps a input $u(t)$ to a state representation vector $x(t)$ and an
+# output $y(t)$. > For simplicity, we assume the input and output are one-dimensional, and the state representation >
+# is $N$-dimensional. The first equation defines the change in $x(t)$ over time.
 
 # Our SSMs will be defined by three matrices – $\boldsymbol{A}, \boldsymbol{B}, \boldsymbol{C}$ – which
 # we will learn. For now we begin with a random SSM, to define sizes,
 
 
-def random_SSM(rng, N):
-    a_r, b_r, c_r = jax.random.split(rng, 3)
+def random_ssm(ring, N):
+    a_r, b_r, c_r = jax.random.split(ring, 3)
     A = jax.random.uniform(a_r, (N, N))
     B = jax.random.uniform(b_r, (N, 1))
     C = jax.random.uniform(c_r, (1, N))
     return A, B, C
 
 
-# ### Discrete-time SSM: The Recurrent Representation
-#
-# > To be applied on a discrete input sequence $(u_0, u_1, \dots )$
-# > instead of continuous function $u(t)$, the SSM must be
-# > discretized by a **step size** $\Delta$ that represents the
-# > resolution of the input.  Conceptually, the inputs $u_k$ can be
-# > viewed as sampling an implicit underlying continuous signal $u(t)$,
-# > where $u_k = u(k \Delta)$.
-# >
-# > To discretize the continuous-time SSM, we use
-# > the [bilinear method](https://en.wikipedia.org/wiki/Bilinear_transform), which converts the
-# > state matrix $\boldsymbol{A}$ into an approximation $\boldsymbol{\overline{A}}$.  The discrete SSM is:
-# $$
-# \begin{aligned}
-#   \boldsymbol{\overline{A}} &= (\boldsymbol{I} - \Delta/2 \cdot \boldsymbol{A})^{-1}(\boldsymbol{I} + \Delta/2 \cdot \boldsymbol{A}) \\
-#   \boldsymbol{\overline{B}} &= (\boldsymbol{I} - \Delta/2 \cdot \boldsymbol{A})^{-1} \Delta \boldsymbol{B} \\
-#   \boldsymbol{\overline{C}} &= \boldsymbol{C}\\
-# \end{aligned}
-# $$
-
-
 def discretize(A, B, C, step):
-    I = np.eye(A.shape[0])
-    BL = inv(I - (step / 2.0) * A)
-    Ab = BL @ (I + (step / 2.0) * A)
+    Eye = np.eye(A.shape[0])
+    BL = inv(Eye - (step / 2.0) * A)
+    Ab = BL @ (Eye + (step / 2.0) * A)
     Bb = (BL * step) @ B
     return Ab, Bb, C
 
 
-# > This equation is now a *sequence-to-sequence* map $u_k \mapsto y_k$ instead of function-to-function.
-# > Moreover the state equation is now a recurrence in $x_k$, allowing the discrete SSM to be computed like an RNN.
-# > Concretely, $x_k \in \mathbb{R}^N$ can be viewed as a *hidden state* with transition matrix $\boldsymbol{\overline{A}}$.
-# $$
-# \begin{aligned}
-#   x_{k} &= \boldsymbol{\overline{A}} x_{k-1} + \boldsymbol{\overline{B}} u_k\\
-#   y_k &= \boldsymbol{\overline{C}} x_k \\
-# \end{aligned}
-# $$
+# > This equation is now a *sequence-to-sequence* map $u_k \mapsto y_k$ instead of function-to-function. > Moreover
+# the state equation is now a recurrence in $x_k$, allowing the discrete SSM to be computed like an RNN. >
+# Concretely, $x_k \in \mathbb{R}^N$ can be viewed as a *hidden state* with transition matrix $\boldsymbol{\overline{
+# A}}$. $$ \begin{aligned} x_{k} &= \boldsymbol{\overline{A}} x_{k-1} + \boldsymbol{\overline{B}} u_k\\ y_k &=
+# \boldsymbol{\overline{C}} x_k \\ \end{aligned} $$
 
 # As the paper says, this "step" function does look superficially like that of
 # an RNN. We can implement this with a
@@ -305,9 +269,6 @@ def example_ssm():
     anim.save("images/line.gif", dpi=150, writer="imagemagick")
 
 
-if False:
-    example_ssm()
-
 # <img src="images/line.gif" width="100%">
 
 # Neat! And that it was just 1 SSM, with 2 hidden states over 100 steps.
@@ -391,7 +352,7 @@ def causal_convolution(u, K, nofft=False):
 
 
 def test_cnn_is_rnn(N=4, L=16, step=1.0 / 16):
-    ssm = random_SSM(rng, N)
+    ssm = random_ssm(rng, N)
     u = jax.random.uniform(rng, (L,))
     jax.random.split(rng, 3)
     # RNN
@@ -418,7 +379,7 @@ def test_cnn_is_rnn(N=4, L=16, step=1.0 / 16):
 def log_step_initializer(dt_min=0.001, dt_max=0.1):
     def init(key, shape):
         return jax.random.uniform(key, shape) * (
-            np.log(dt_max) - np.log(dt_min)
+                np.log(dt_max) - np.log(dt_min)
         ) + np.log(dt_min)
 
     return init
@@ -673,56 +634,6 @@ def make_HiPPO(N):
 # look at an example,
 
 
-def example_legendre(N=8):
-    # Random hidden state as coefficients
-    import numpy as np
-    import numpy.polynomial.legendre
-
-    x = (np.random.rand(N) - 0.5) * 2
-    t = np.linspace(-1, 1, 100)
-    f = numpy.polynomial.legendre.Legendre(x)(t)
-
-    # Plot
-    import matplotlib.pyplot as plt
-    import seaborn
-
-    seaborn.set_context("talk")
-    fig = plt.figure(figsize=(20, 10))
-    ax = fig.gca(projection="3d")
-    ax.plot(
-        np.linspace(-25, (N - 1) * 100 + 25, 100),
-        [0] * 100,
-        zs=-1,
-        zdir="x",
-        color="black",
-    )
-    ax.plot(t, f, zs=N * 100, zdir="y", c="r")
-    for i in range(N):
-        coef = [0] * N
-        coef[N - i - 1] = 1
-        ax.set_zlim(-4, 4)
-        ax.set_yticks([])
-        ax.set_zticks([])
-        # Plot basis function.
-        f = numpy.polynomial.legendre.Legendre(coef)(t)
-        ax.bar(
-            [100 * i],
-            [x[i]],
-            zs=-1,
-            zdir="x",
-            label="x%d" % i,
-            color="brown",
-            fill=False,
-            width=50,
-        )
-        ax.plot(t, f, zs=100 * i, zdir="y", c="b", alpha=0.5)
-    ax.view_init(elev=40.0, azim=-45)
-    fig.savefig("images/leg.png")
-
-
-if False:
-    example_legendre()
-
 # The red line represents that curve we are approximating,
 # while the black bars represent the values of our hidden state.
 # Each is a coefficient for one element of the Legendre series
@@ -837,15 +748,6 @@ def K_gen_inverse(Ab, Bb, Cb, L):
 
 
 # But it does output the same values,
-
-
-def test_gen_inverse(L=16, N=4):
-    ssm = random_SSM(rng, N)
-    ssm = discretize(*ssm, 1.0 / L)
-    b = K_conv(*ssm, L=L)
-
-    a = conv_from_gen(K_gen_inverse(*ssm, L=L), L)
-    assert np.allclose(a, b)
 
 
 #  In summary, Step 1 allows us to replace the matrix power with an
@@ -1003,7 +905,7 @@ def test_gen_dplr(L=16, N=4):
     # Create a DPLR A matrix and discretize
     Lambda, P, B, _ = make_DPLR_HiPPO(N)
     A = np.diag(Lambda) - P[:, np.newaxis] @ P[:, np.newaxis].conj().T
-    _, _, C = random_SSM(rng, N)
+    _, _, C = random_ssm(rng, N)
 
     Ab, Bb, Cb = discretize(A, B, C, 1.0 / L)
     a = K_conv(Ab, Bb, Cb.conj(), L=L)
@@ -1252,7 +1154,7 @@ class S4Layer(nn.Module):
         # C should be init as standard normal
         # This doesn't work due to how JAX handles complex optimizers https://github.com/deepmind/optax/issues/196
         # self.C = self.param("C", normal(stddev=1.0, dtype=np.complex64), (self.N,))
-        self.C = self.param("C", normal(stddev=0.5**0.5), (self.N, 2))
+        self.C = self.param("C", normal(stddev=0.5 ** 0.5), (self.N, 2))
         self.C = self.C[..., 0] + 1j * self.C[..., 1]
         self.D = self.param("D", nn.initializers.ones, (1,))
         self.step = np.exp(self.param("log_step", log_step_initializer(), (1,)))
@@ -1308,6 +1210,7 @@ class S4Layer(nn.Module):
 
 
 S4Layer = cloneLayer(S4Layer)
+
 
 # We initialize the model by computing a HiPPO DPLR initializer
 
@@ -1385,244 +1288,6 @@ def sample_checkpoint(path, model, length, rng):
     params, prime, cache = init_recurrence(model, state["params"], start, rng)
     print("[*] Sampling output")
     return sample(model, params, prime, cache, start, 0, length - 1, rng)
-
-
-# ### Experiments: MNIST
-
-# Now that we have the model, we can try it out on some MNIST experiments.
-# For these experiments we linearize MNIST and just treat each image as a sequence of
-# pixels.
-
-# The first experiments we ran were on MNIST classification. While
-# not in theory a hard problem, treating MNIST as a linear sequence
-# classification task is a bit strange. However in practice, the model
-# with $H=256$ and four layers seems to get up near 99% right away.
-
-# A more visually interesting task is generating MNIST digits, by predicting entire
-# sequences of pixels! Here, we simply feed in a sequence of pixels into the model and have it
-# predict the next one like language modeling. With a little
-# tweaking, we are able to get the model to an NLL of 0.36 on this
-# task with size 512 and 6 layers (~4m parameters).
-#
-# The metric usually used for this task is *[bits per
-# dimension](https://paperswithcode.com/sota/image-generation-on-mnist)* which is
-# NLL in base 2 for MNIST. A loss of 0.36 is ~0.52 BPD which is SOTA according to PapersWithCode.
-
-
-# <img src="images/sample.png" width="100%">
-
-# We can also do prefix-samples – given the first 300 pixels, try to complete the image.
-# S4 is on the left, true on the right.
-
-# <img src="images/im0.1.png" width="45%">
-# <img src="images/im0.2.png" width="45%">
-# <img src="images/im0.3.png" width="45%">
-# <img src="images/im0.4.png" width="45%">
-# <img src="images/im0.5.png" width="45%">
-# <img src="images/im0.6.png" width="45%">
-# <img src="images/im0.7.png" width="45%">
-# <img src="images/im0.8.png" width="45%">
-
-
-def sample_image_prefix(
-    params,
-    model,
-    # length,
-    rng,
-    dataloader,
-    prefix=300,
-    # bsz=32,
-    imshape=(28, 28),
-    n_batches=None,
-    save=True,
-):
-    """Sample a grayscale image represented as intensities in [0, 255]"""
-    import matplotlib.pyplot as plt
-    import numpy as onp
-
-    # from .data import Datasets
-    # BATCH = bsz
-    # start = np.zeros((BATCH, length), dtype=int)
-    # start = np.zeros((BATCH, length, 1), dtype=int)
-    start = np.array(next(iter(dataloader))[0].numpy())
-    start = np.zeros_like(start)
-    # params, prime, cache = init_recurrence(model, params, start[:, :-1], rng)
-    params, prime, cache = init_recurrence(model, params, start, rng)
-
-    BATCH = start.shape[0]
-    START = prefix
-    LENGTH = start.shape[1]
-    assert LENGTH == onp.prod(imshape)
-
-    # _, dataloader, _, _, _ = Datasets["mnist"](bsz=BATCH)
-    it = iter(dataloader)
-    for j, im in enumerate(it):
-        if n_batches is not None and j >= n_batches:
-            break
-
-        image = im[0].numpy()
-        image = np.pad(
-            image[:, :-1, :], [(0, 0), (1, 0), (0, 0)], constant_values=0
-        )
-        cur = onp.array(image)
-        # cur[:, START + 1 :, 0] = 0
-        # cur = np.pad(cur[:, :-1, 0], [(0, 0), (1, 0)], constant_values=256)
-        cur = np.array(cur[:, :])
-
-        # Cache the first `start` inputs.
-        out, vars = model.apply(
-            {"params": params, "prime": prime, "cache": cache},
-            cur[:, np.arange(0, START)],
-            mutable=["cache"],
-        )
-        cache = vars["cache"].unfreeze()
-        out = sample(model, params, prime, cache, cur, START, LENGTH - 1, rng)
-
-        # Visualization
-        out = out.reshape(BATCH, *imshape)
-        final = onp.zeros((BATCH, *imshape, 3))
-        final2 = onp.zeros((BATCH, *imshape, 3))
-        final[:, :, :, 0] = out
-        f = final.reshape(BATCH, LENGTH, 3)
-        i = image.reshape(BATCH, LENGTH)
-        f[:, :START, 1] = i[:, :START]
-        f[:, :START, 2] = i[:, :START]
-        f = final2.reshape(BATCH, LENGTH, 3)
-        f[:, :, 1] = i
-        f[:, :START, 0] = i[:, :START]
-        f[:, :START, 2] = i[:, :START]
-        if save:
-            for k in range(BATCH):
-                fig, (ax1, ax2) = plt.subplots(ncols=2)
-                ax1.set_title("Sampled")
-                ax1.imshow(final[k] / 256.0)
-                ax2.set_title("True")
-                ax1.axis("off")
-                ax2.axis("off")
-                ax2.imshow(final2[k] / 256.0)
-                fig.savefig("im%d.%d.png" % (j, k))
-                plt.close()
-                print(f"Sampled batch {j} image {k}")
-    return final, final2
-
-
-# ### Experiments: QuickDraw
-
-
-# Next we tried training a model to generate drawings. For this we
-# used the [QuickDraw
-# dataset](https://github.com/googlecreativelab/quickdraw-dataset).
-# The dataset includes a version of the dataset downsampled to MNIST
-# size so we can use roughly the same model as above. The dataset
-# is much larger though (5M images) and more complex. We only trained
-# for 1 epoch with a $H=256$, 4 layer model. Still, the approach was
-# able to generate relatively coherent completions. These are prefix
-# samples with 500 pixels given.
-
-# <img src="images/quickdraw/im1.png" width="45%">
-# <img src="images/quickdraw/im2.png" width="45%">
-# <img src="images/quickdraw/im3.png" width="45%">
-# <img src="images/quickdraw/im4.png" width="45%">
-# <img src="images/quickdraw/im5.png" width="45%">
-# <img src="images/quickdraw/im6.png" width="45%">
-
-
-# ### Experiments: Spoken Digits
-
-# Finally we played with modeling sound waves directly. For these, we
-# use the
-# [Free Spoken Digits Datasets](https://github.com/Jakobovski/free-spoken-digit-dataset)
-# an MNIST like dataset of various speakers reading off digits. We
-# first trained a classification model and found that the approach was
-# able to reach $97\%$ accuracy just from the raw soundwave. Next we
-# trained a generation model to produce the sound wave directly. With
-# $H=512$ the model seems to pick up the data relatively well. This
-# dataset only has around 3000 examples, but the model can produce
-# reasonably good (cherry-picked) continuations. Note these sequences are 6400 steps
-# long at an 8kHz sampling rate, discretized to 256 classes with
-# [Mu Law Encoding](https://en.wikipedia.org/wiki/%CE%9C-law_algorithm).
-
-# <center>
-# <img src='images/speech3.1.png' width='100%'>
-# <audio controls>
-#  <source src='images/sample3.1.wav' type='audio/wav'>
-# </audio>
-# <audio controls>
-#  <source src='images/sample3.1.gold.wav' type='audio/wav'>
-# </audio>
-#
-# <img src='images/speech6.1.png' width='100%'>
-# <audio controls>
-#  <source src='images/sample6.1.wav' type='audio/wav'>
-# </audio>
-# <audio controls>
-#  <source src='images/sample6.1.gold.wav' type='audio/wav'>
-# </audio>
-#
-# <img src='images/speech7.0.png' width='100%'>
-# <audio controls>
-#  <source src='images/sample7.0.wav' type='audio/wav'>
-# </audio>
-# <audio controls>
-#  <source src='images/sample7.0.gold.wav' type='audio/wav'>
-# </audio>
-#
-# <img src='images/speech9.0.png' width='100%'>
-# <audio controls>
-#  <source src='images/sample9.0.wav' type='audio/wav'>
-# </audio>
-# <audio controls>
-#  <source src='images/sample9.0.gold.wav' type='audio/wav'>
-# </audio>
-#
-# <img src='images/speech10.0.png' width='100%'>
-# <audio controls>
-#  <source src='images/sample10.0.wav' type='audio/wav'>
-# </audio>
-# <audio controls>
-#  <source src='images/sample10.0.gold.wav' type='audio/wav'>
-# </audio>
-#
-# <img src='images/speech13.1.png' width='100%'>
-# <audio controls>
-#  <source src='images/sample13.1.wav' type='audio/wav'>
-# </audio>
-# <audio controls>
-#  <source src='images/sample13.1.gold.wav' type='audio/wav'>
-# </audio>
-#
-# <img src='images/speech23.0.png' width='100%'>
-# <audio controls>
-#  <source src='images/sample23.0.wav' type='audio/wav'>
-# </audio>
-# <audio controls>
-#  <source src='images/sample23.0.gold.wav' type='audio/wav'>
-# </audio>
-#
-# <img src='images/speech25.0.png' width='100%'>
-# <audio controls>
-#  <source src='images/sample25.0.wav' type='audio/wav'>
-# </audio>
-# <audio controls>
-#  <source src='images/sample25.0.gold.wav' type='audio/wav'>
-# </audio>
-#
-# <img src='images/speech26.0.png' width='100%'>
-# <audio controls>
-#  <source src='images/sample26.0.wav' type='audio/wav'>
-# </audio>
-# <audio controls>
-#  <source src='images/sample26.0.gold.wav' type='audio/wav'>
-# </audio>
-#
-# <img src='images/speech26.1.png' width='100%'>
-# <audio controls>
-#  <source src='images/sample26.1.wav' type='audio/wav'>
-# </audio>
-# <audio controls>
-#  <source src='images/sample26.1.gold.wav' type='audio/wav'>
-# </audio>
-# </center>
 
 # Our [full code base](https://github.com/srush/annotated-s4/) contains
 # more examples and infrastructure for training models for generations and
