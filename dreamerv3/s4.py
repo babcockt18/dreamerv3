@@ -96,6 +96,7 @@ from jax.nn.initializers import lecun_normal, normal
 from jax.numpy.linalg import eigh, inv, matrix_power
 from jax.scipy.signal import convolve
 
+
 if __name__ == "__main__":
     # For this tutorial, construct a global JAX rng key
     # But we don't want it when importing as a library
@@ -111,23 +112,15 @@ if __name__ == "__main__":
 # However, we are going to need some technical background. Let's work
 # our way through the background of the paper.
 
-# > The [state space model](https://en.wikipedia.org/wiki/State-space_representation) is defined by this simple
-# equation. > It maps a 1-D input signal $u(t)$ to an $N$-D latent state $x(t)$ > before projecting to a 1-D output
-# signal $y(t)$. $$ \begin{aligned} x'(t) &= \boldsymbol{A}x(t) + \boldsymbol{B}u(t) \\ y(t) &= \boldsymbol{C}x(t) +
-# \boldsymbol{D}u(t) \end{aligned} $$ > Our goal is > to simply use the SSM as a black-box representation in a deep >
-# sequence model, where $\boldsymbol{A}, \boldsymbol{B}, \boldsymbol{C}, \boldsymbol{D}$ are > parameters learned by
-# gradient descent.  For the remainder, we will > omit the parameter $\boldsymbol{D}$ for exposition (or
-# equivalently, > assume $\boldsymbol{D} = 0$  because the term $\boldsymbol{D}u$ can be > viewed as a skip
-# connection and is easy to compute). > > An SSM maps a input $u(t)$ to a state representation vector $x(t)$ and an
-# output $y(t)$. > For simplicity, we assume the input and output are one-dimensional, and the state representation >
-# is $N$-dimensional. The first equation defines the change in $x(t)$ over time.
+
 
 # Our SSMs will be defined by three matrices – $\boldsymbol{A}, \boldsymbol{B}, \boldsymbol{C}$ – which
 # we will learn. For now we begin with a random SSM, to define sizes,
 
 
-def random_ssm(ring, N):
-    a_r, b_r, c_r = jax.random.split(ring, 3)
+
+def random_SSM(rng, N):
+    a_r, b_r, c_r = jax.random.split(rng, 3)
     A = jax.random.uniform(a_r, (N, N))
     B = jax.random.uniform(b_r, (N, 1))
     C = jax.random.uniform(c_r, (1, N))
@@ -135,18 +128,14 @@ def random_ssm(ring, N):
 
 
 def discretize(A, B, C, step):
-    Eye = np.eye(A.shape[0])
-    BL = inv(Eye - (step / 2.0) * A)
-    Ab = BL @ (Eye + (step / 2.0) * A)
+    I = np.eye(A.shape[0])
+    BL = inv(I - (step / 2.0) * A)
+    Ab = BL @ (I + (step / 2.0) * A)
     Bb = (BL * step) @ B
     return Ab, Bb, C
 
 
-# > This equation is now a *sequence-to-sequence* map $u_k \mapsto y_k$ instead of function-to-function. > Moreover
-# the state equation is now a recurrence in $x_k$, allowing the discrete SSM to be computed like an RNN. >
-# Concretely, $x_k \in \mathbb{R}^N$ can be viewed as a *hidden state* with transition matrix $\boldsymbol{\overline{
-# A}}$. $$ \begin{aligned} x_{k} &= \boldsymbol{\overline{A}} x_{k-1} + \boldsymbol{\overline{B}} u_k\\ y_k &=
-# \boldsymbol{\overline{C}} x_k \\ \end{aligned} $$
+
 
 # As the paper says, this "step" function does look superficially like that of
 # an RNN. We can implement this with a
@@ -269,6 +258,7 @@ def example_ssm():
     anim.save("images/line.gif", dpi=150, writer="imagemagick")
 
 
+
 # <img src="images/line.gif" width="100%">
 
 # Neat! And that it was just 1 SSM, with 2 hidden states over 100 steps.
@@ -352,7 +342,9 @@ def causal_convolution(u, K, nofft=False):
 
 
 def test_cnn_is_rnn(N=4, L=16, step=1.0 / 16):
+
     ssm = random_ssm(rng, N)
+
     u = jax.random.uniform(rng, (L,))
     jax.random.split(rng, 3)
     # RNN
@@ -379,7 +371,7 @@ def test_cnn_is_rnn(N=4, L=16, step=1.0 / 16):
 def log_step_initializer(dt_min=0.001, dt_max=0.1):
     def init(key, shape):
         return jax.random.uniform(key, shape) * (
-                np.log(dt_max) - np.log(dt_min)
+            np.log(dt_max) - np.log(dt_min)
         ) + np.log(dt_min)
 
     return init
@@ -634,6 +626,7 @@ def make_HiPPO(N):
 # look at an example,
 
 
+
 # The red line represents that curve we are approximating,
 # while the black bars represent the values of our hidden state.
 # Each is a coefficient for one element of the Legendre series
@@ -748,6 +741,7 @@ def K_gen_inverse(Ab, Bb, Cb, L):
 
 
 # But it does output the same values,
+
 
 
 #  In summary, Step 1 allows us to replace the matrix power with an
@@ -1155,6 +1149,7 @@ class S4Layer(nn.Module):
         # This doesn't work due to how JAX handles complex optimizers https://github.com/deepmind/optax/issues/196
         # self.C = self.param("C", normal(stddev=1.0, dtype=np.complex64), (self.N,))
         self.C = self.param("C", normal(stddev=0.5 ** 0.5), (self.N, 2))
+
         self.C = self.C[..., 0] + 1j * self.C[..., 1]
         self.D = self.param("D", nn.initializers.ones, (1,))
         self.step = np.exp(self.param("log_step", log_step_initializer(), (1,)))
@@ -1289,6 +1284,7 @@ def sample_checkpoint(path, model, length, rng):
     print("[*] Sampling output")
     return sample(model, params, prime, cache, start, 0, length - 1, rng)
 
+
 # Our [full code base](https://github.com/srush/annotated-s4/) contains
 # more examples and infrastructure for training models for generations and
 # classification.
@@ -1331,3 +1327,4 @@ def sample_checkpoint(path, model, length, rng):
 #   * Added RNN decoding
 #   * Added Speech examples
 # * v1 - Original version
+
